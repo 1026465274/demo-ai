@@ -1,132 +1,178 @@
 'use client';
 
-import { useState } from 'react';
-import { useActions, useUIState } from 'ai/rsc';
-import { generateId } from 'ai';
-import { AI } from './ai';
+import { useChat, Message } from 'ai/react';
+
+// 确认状态常量 - 与后端保持一致
+const APPROVAL = {
+  YES: 'Yes, confirmed.',
+  NO: 'No, denied.',
+} as const;
+
+// 需要确认的工具列表
+const toolsRequiringConfirmation = ['ipToLocation', 'weather', 'convertFahrenheitToCelsius'];
 
 export default function Chat() {
-  const [input, setInput] = useState<string>('');
-  const [conversation, setConversation] = useUIState<typeof AI>();
-  const { continueConversation } = useActions();
+  const { messages, input, handleInputChange, handleSubmit, addToolResult } = useChat({
+    maxSteps: 5,
+  });
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-
-    const userMessage = input;
-    setInput('');
-
-    // 添加用户消息到对话
-    setConversation((currentConversation) => [
-      ...currentConversation,
-      {
-        id: generateId(),
-        role: 'user' as const,
-        display: (
-          <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg mb-4">
-            <div className="font-semibold text-blue-800 dark:text-blue-200 mb-1">
-              👤 用户
-            </div>
-            <div className="text-gray-800 dark:text-gray-200">{userMessage}</div>
-          </div>
-        ),
-      },
-    ]);
-
-    // 调用 AI 并添加响应
-    try {
-      const message = await continueConversation(userMessage);
-      setConversation((currentConversation) => [
-        ...currentConversation,
-        {
-          ...message,
-          display: (
-            <div className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg mb-4">
-              <div className="font-semibold text-gray-800 dark:text-gray-200 mb-2">
-                🤖 AI 助手
-              </div>
-              <div>{message.display}</div>
-            </div>
-          ),
-        },
-      ]);
-    } catch (error) {
-      console.error('Error:', error);
-      setConversation((currentConversation) => [
-        ...currentConversation,
-        {
-          id: generateId(),
-          role: 'assistant' as const,
-          display: (
-            <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-lg mb-4">
-              <div className="font-semibold text-red-800 dark:text-red-200 mb-1">
-                ❌ 错误
-              </div>
-              <div className="text-red-700 dark:text-red-300">
-                抱歉，处理您的请求时出现了错误。请稍后再试。
-              </div>
-            </div>
-          ),
-        },
-      ]);
-    }
-  };
+  // 检查是否有待确认的工具调用
+  const pendingToolCallConfirmation = messages.some((m: Message) =>
+    m.parts?.some(
+      part =>
+        part.type === 'tool-invocation' &&
+        part.toolInvocation.state === 'call' &&
+        toolsRequiringConfirmation.includes(part.toolInvocation.toolName),
+    ),
+  );
 
   return (
-    <div className="flex flex-col h-screen max-w-4xl mx-auto">
-      {/* 标题栏 */}
-      <div className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 p-4">
-        <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-200">
-          🤖 AI 智能助手
-        </h1>
-        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-          支持天气查询、温度转换等多步骤交互功能
-        </p>
-      </div>
+    <div className="flex flex-col w-full max-w-2xl py-24 mx-auto stretch">
+      <div className="space-y-4 mb-4">
+        {messages?.map((m: Message) => (
+          <div key={m.id} className="whitespace-pre-wrap">
+            <div className={`p-3 rounded-lg mb-4 ${
+              m.role === 'user' 
+                ? 'bg-blue-50 dark:bg-blue-900/20' 
+                : 'bg-gray-50 dark:bg-gray-800'
+            }`}>
+              <div className={`font-semibold mb-2 ${
+                m.role === 'user'
+                  ? 'text-blue-800 dark:text-blue-200'
+                  : 'text-gray-800 dark:text-gray-200'
+              }`}>
+                {m.role === 'user' ? '👤 用户' : '🤖 AI 助手'}
+              </div>
+              
+              {m.parts?.map((part, i) => {
+                switch (part.type) {
+                  case 'text':
+                    return (
+                      <div key={i} className={
+                        m.role === 'user'
+                          ? 'text-blue-700 dark:text-blue-300'
+                          : 'text-gray-700 dark:text-gray-300'
+                      }>
+                        {part.text}
+                      </div>
+                    );
+                    
+                  case 'tool-invocation':
+                    const toolInvocation = part.toolInvocation;
+                    const toolCallId = toolInvocation.toolCallId;
 
-      {/* 对话区域 */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {conversation.length === 0 && (
-          <div className="text-center text-gray-500 dark:text-gray-400 mt-8">
-            <div className="text-4xl mb-4">👋</div>
-            <p className="text-lg mb-2">欢迎使用 AI 智能助手！</p>
-            <p className="text-sm">
-              试试问我："北京的天气如何，用摄氏度告诉我"
-            </p>
-          </div>
-        )}
+                    // 渲染工具确认界面
+                    if (
+                      toolsRequiringConfirmation.includes(toolInvocation.toolName) &&
+                      toolInvocation.state === 'call'
+                    ) {
+                      return (
+                        <div key={toolCallId} className="border border-orange-200 dark:border-orange-700 p-4 rounded-lg bg-orange-50 dark:bg-orange-900/20">
+                          <div className="mb-3">
+                            <h3 className="font-semibold text-lg flex items-center">
+                              🔧 准备调用工具：{getToolDescription(toolInvocation.toolName)}
+                            </h3>
+                            <div className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                              <div className="font-medium mb-1">工具名称：</div>
+                              <div className="ml-2 font-mono text-purple-600 dark:text-purple-400">
+                                {toolInvocation.toolName}
+                              </div>
+                              
+                              <div className="font-medium mb-1 mt-2">参数：</div>
+                              {Object.entries(toolInvocation.args).map(([key, value]) => (
+                                <div key={key} className="ml-2">
+                                  <span className="font-medium">{key}:</span>{' '}
+                                  <span className="font-mono text-blue-600 dark:text-blue-400">
+                                    {typeof value === 'string' ? `"${value}"` : String(value)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => addToolResult({
+                                toolCallId,
+                                result: APPROVAL.YES,
+                              })}
+                              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md transition-colors font-medium flex items-center space-x-1"
+                            >
+                              <span>✅</span>
+                              <span>确认执行</span>
+                            </button>
+                            <button
+                              onClick={() => addToolResult({
+                                toolCallId,
+                                result: APPROVAL.NO,
+                              })}
+                              className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md transition-colors font-medium flex items-center space-x-1"
+                            >
+                              <span>❌</span>
+                              <span>取消</span>
+                            </button>
+                          </div>
+                          
+                          <div className="text-xs text-orange-600 dark:text-orange-400 mt-2">
+                            💡 请确认是否要执行此工具调用
+                          </div>
+                        </div>
+                      );
+                    }
 
-        {conversation.map((message) => (
-          <div key={message.id}>
-            {message.display}
+                    // 显示工具执行结果
+                    if (toolInvocation.state === 'result') {
+                      return (
+                        <div key={toolCallId} className="border border-green-200 dark:border-green-700 p-3 rounded-lg bg-green-50 dark:bg-green-900/20">
+                          <div className="text-sm text-green-700 dark:text-green-300">
+                            <strong>🔧 {getToolDescription(toolInvocation.toolName)} 结果：</strong>
+                          </div>
+                          <div className="mt-1 text-green-800 dark:text-green-200">
+                            {toolInvocation.result}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return null;
+                    
+                  default:
+                    return null;
+                }
+              })}
+            </div>
           </div>
         ))}
       </div>
-
-      {/* 输入区域 */}
-      <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-white dark:bg-gray-900">
-        <form onSubmit={handleSubmit} className="flex space-x-2">
+      
+      <form onSubmit={handleSubmit} className="fixed bottom-0 w-full max-w-2xl p-4 bg-white dark:bg-gray-900 border-t">
+        <div className="flex space-x-2">
           <input
-            type="text"
+            disabled={pendingToolCallConfirmation}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="请输入您的问题..."
-            className="flex-1 p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-200"
-            disabled={false}
+            onChange={handleInputChange}
+            placeholder={pendingToolCallConfirmation ? "请先确认工具调用..." : "输入消息..."}
+            className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 disabled:opacity-50"
           />
           <button
             type="submit"
-            disabled={!input.trim()}
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg transition-colors font-medium"
+            disabled={pendingToolCallConfirmation}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             发送
           </button>
-        </form>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
-          💡 提示：可以询问天气、温度转换等问题
         </div>
-      </div>
+      </form>
     </div>
   );
+}
+
+// 工具描述映射
+function getToolDescription(toolName: string): string {
+  const descriptions = {
+    ipToLocation: 'IP地址转地理位置',
+    weather: '获取天气信息',
+    convertFahrenheitToCelsius: '温度转换',
+  };
+  return descriptions[toolName as keyof typeof descriptions] || toolName;
 }
